@@ -72,7 +72,7 @@ string hasData(string s) {
 int main() {
   uWS::Hub h;
 
-  const double latency = 0.1; // ms
+  const double LATENCY = 0.1; // ms
   STEER_MIN = deg2rad(-25);
   STEER_MAX = deg2rad(25);
   ACCEL_MIN = -1.0;
@@ -80,14 +80,14 @@ int main() {
 
   // MPC is initialized here!
   // dt := 100 millisecond latency dt
-  MPC mpc(/* N */ 10, /* dt */ latency, /* polyorder */ 3, STEER_MIN, STEER_MAX, ACCEL_MIN, ACCEL_MAX);
+  MPC mpc(/* N */ 10, /* dt */ LATENCY, /* polyorder */ 3, STEER_MIN, STEER_MAX, ACCEL_MIN, ACCEL_MAX);
 
 
 //  std::chrono::time_point<std::chrono::system_clock> ts1 = std::chrono::system_clock::now();
 //  std::chrono::time_point<std::chrono::system_clock> ts2;
 //  double dt;
 
-  h.onMessage([&mpc, latency](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
+  h.onMessage([&mpc, &LATENCY](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
@@ -124,12 +124,15 @@ int main() {
           // Calculate steering angle and throttle using MPC.
           if (mpc.preprocess(ptsx, ptsy, px, py, psi, v))
           {
+//            cout << "******" << endl;
             auto vars = mpc.solve();
             steer_value = vars[6] / STEER_MAX;
             throttle_value = vars[7];
+//            cout << "***2***" << endl;
           }
           else
           {
+            cout << "***INITIAL STATE***" << endl;
             steer_value = double(j[1]["steering_angle"]) / STEER_MAX;
             throttle_value = j[1]["throttle"];
           }
@@ -152,8 +155,10 @@ int main() {
           msgJson["mpc_y"] = mpc_y_vals;
 
           //Display the waypoints/reference line
-          vector<double> next_x_vals;
-          vector<double> next_y_vals;
+          vector<double> next_x_vals = mpc.ptsx_car_;
+          vector<double> next_y_vals(next_x_vals.size());
+          for (unsigned short n = 0; n < next_y_vals.size(); ++n)
+            next_y_vals[n] = mpc.polyeval(mpc.ptsx_car_[n]);
 
           //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
           // the points in the simulator are connected by a Yellow line
@@ -173,7 +178,7 @@ int main() {
           //
           // NOTE: REMEMBER TO SET THIS TO 100 MILLISECONDS BEFORE
           // SUBMITTING.
-          this_thread::sleep_for(chrono::milliseconds((int)latency*1000));
+          this_thread::sleep_for(chrono::milliseconds((int)LATENCY*1000));
           ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
         }
       } else {

@@ -291,10 +291,19 @@ vector<double> MPC::solve()
   //
   // {...} is shorthand for creating a vector, so auto x1 = {1.0,2.0}
   // creates a 2 element double vector.
-  return { solution.x[x_start_ + 1],   solution.x[y_start_ + 1],
-           solution.x[psi_start_ + 1], solution.x[v_start_ + 1],
-           solution.x[cte_start_ + 1], solution.x[epsi_start_ + 1],
-           solution.x[delta_start_],   solution.x[a_start_] };
+  vector<double> res(2 + (N_ - 1) * 2);
+  res[0] = solution.x[delta_start_];
+  res[1] = solution.x[a_start_];
+  for (unsigned short n = 0; n <= N_ - 2; ++n)
+  {
+    res[2 * n + 2] = solution.x[x_start_ + 1 + n];
+    res[2 * n + 3] = solution.x[y_start_ + 1 + n];
+  }
+//  return { solution.x[x_start_ + 1],   solution.x[y_start_ + 1],
+//           solution.x[psi_start_ + 1], solution.x[v_start_ + 1],
+//           solution.x[cte_start_ + 1], solution.x[epsi_start_ + 1],
+//           solution.x[delta_start_],   solution.x[a_start_] };
+  return res;
 }
 
 // Evaluate a polynomial.
