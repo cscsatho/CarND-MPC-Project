@@ -5,7 +5,7 @@
 #include <thread>
 #include <vector>
 #include "Eigen-3.3/Eigen/Core"
-#include "Eigen-3.3/Eigen/QR"
+//#include "Eigen-3.3/Eigen/QR"
 #include "MPC.h"
 #include "json.hpp"
 
@@ -16,6 +16,10 @@ using json = nlohmann::json;
 constexpr double pi() { return M_PI; }
 double deg2rad(double x) { return x * pi() / 180; }
 double rad2deg(double x) { return x * 180 / pi(); }
+double STEER_MIN;
+double STEER_MAX;
+double ACCEL_MIN;
+double ACCEL_MAX;
 
 // Checks if the SocketIO event has JSON data.
 // If there is data the JSON object in string format will be returned,
@@ -32,44 +36,56 @@ string hasData(string s) {
   return "";
 }
 
-// Evaluate a polynomial.
-double polyeval(Eigen::VectorXd coeffs, double x) {
-  double result = 0.0;
-  for (int i = 0; i < coeffs.size(); i++) {
-    result += coeffs[i] * pow(x, i);
-  }
-  return result;
-}
+//// Evaluate a polynomial.
+//double polyeval(Eigen::VectorXd coeffs, double x) {
+//  double result = 0.0;
+//  for (int i = 0; i < coeffs.size(); i++) {
+//    result += coeffs[i] * pow(x, i);
+//  }
+//  return result;
+//}
 
-// Fit a polynomial.
-// Adapted from
-// https://github.com/JuliaMath/Polynomials.jl/blob/master/src/Polynomials.jl#L676-L716
-Eigen::VectorXd polyfit(Eigen::VectorXd xvals, Eigen::VectorXd yvals,
-                        int order) {
-  assert(xvals.size() == yvals.size());
-  assert(order >= 1 && order <= xvals.size() - 1);
-  Eigen::MatrixXd A(xvals.size(), order + 1);
-
-  for (int i = 0; i < xvals.size(); i++) {
-    A(i, 0) = 1.0;
-  }
-
-  for (int j = 0; j < xvals.size(); j++) {
-    for (int i = 0; i < order; i++) {
-      A(j, i + 1) = A(j, i) * xvals(j);
-    }
-  }
-
-  auto Q = A.householderQr();
-  auto result = Q.solve(yvals);
-  return result;
-}
+//// Fit a polynomial.
+//// Adapted from
+//// https://github.com/JuliaMath/Polynomials.jl/blob/master/src/Polynomials.jl#L676-L716
+//Eigen::VectorXd polyfit(Eigen::VectorXd xvals, Eigen::VectorXd yvals,
+//                        int order) {
+//  assert(xvals.size() == yvals.size());
+//  assert(order >= 1 && order <= xvals.size() - 1);
+//  Eigen::MatrixXd A(xvals.size(), order + 1);
+//
+//  for (int i = 0; i < xvals.size(); i++) {
+//    A(i, 0) = 1.0;
+//  }
+//
+//  for (int j = 0; j < xvals.size(); j++) {
+//    for (int i = 0; i < order; i++) {
+//      A(j, i + 1) = A(j, i) * xvals(j);
+//    }
+//  }
+//
+//  auto Q = A.householderQr();
+//  auto result = Q.solve(yvals);
+//  return result;
+//}
 
 int main() {
   uWS::Hub h;
 
+  const double latency = 0.1; // secs
+  STEER_MIN = deg2rad(-25);
+  STEER_MAX = deg2rad(25);
+  ACCEL_MIN = -1.0;
+  ACCEL_MAX = -1.0;
+
   // MPC is initialized here!
-  MPC mpc;
+  // dt := 100 millisecond latency dt
+  MPC mpc(/* N */ 10, /* dt */ latency, /* polyorder */ 3, STEER_MIN, STEER_MAX, ACCEL_MIN, ACCEL_MAX);
+
+
+//  std::chrono::time_point<std::chrono::system_clock> ts1 = std::chrono::system_clock::now();
+//  std::chrono::time_point<std::chrono::system_clock> ts2;
+//  double dt;
 
   h.onMessage([&mpc](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
@@ -92,14 +108,31 @@ int main() {
           double psi = j[1]["psi"];
           double v = j[1]["speed"];
 
+//          double delta0 = j[1]["steering_angle"]; // The current steering angle in radians
+//          double a0 = j[1]["throttle"]; // The current throttle value [-1, 1]
+
+          double steer_value;
+          double throttle_value;
+
+//          ts2 = std::chrono::system_clock::now();
+//          dt = (ts2 - ts1).count();
+//          ts1 = ts2;
+
+//          Eigen::VectorXd state;
+//          Eigen::VectorXd coeffs;
+
+          if (!mpc.preprocess(ptsx, ptsy, px, py, psi, v))
+            return; // skipping first state in order to handle latency
           /*
           * TODO: Calculate steering angle and throttle using MPC.
           *
           * Both are in between [-1, 1].
           *
           */
-          double steer_value;
-          double throttle_value;
+
+          auto vars = mpc.solve();
+          steer_value = vars[6] / STEER_MAX;
+          throttle_value = vars[7];
 
           json msgJson;
           // NOTE: Remember to divide by deg2rad(25) before you send the steering value back.
