@@ -72,7 +72,7 @@ string hasData(string s) {
 int main() {
   uWS::Hub h;
 
-  const double latency = 0.1; // secs
+  const double latency = 0.1; // ms
   STEER_MIN = deg2rad(-25);
   STEER_MAX = deg2rad(25);
   ACCEL_MIN = -1.0;
@@ -87,7 +87,7 @@ int main() {
 //  std::chrono::time_point<std::chrono::system_clock> ts2;
 //  double dt;
 
-  h.onMessage([&mpc](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
+  h.onMessage([&mpc, latency](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
@@ -106,7 +106,7 @@ int main() {
           double px = j[1]["x"];
           double py = j[1]["y"];
           double psi = j[1]["psi"];
-          double v = j[1]["speed"];
+          double v = double(j[1]["speed"]) * 0.44704; // = 1.609344 [mi/km] / 3600 [hr/sec] * 1000 [km/m]
 
 //          double delta0 = j[1]["steering_angle"]; // The current steering angle in radians
 //          double a0 = j[1]["throttle"]; // The current throttle value [-1, 1]
@@ -121,18 +121,19 @@ int main() {
 //          Eigen::VectorXd state;
 //          Eigen::VectorXd coeffs;
 
-          if (!mpc.preprocess(ptsx, ptsy, px, py, psi, v))
-            return; // skipping first state in order to handle latency
-          /*
-          * TODO: Calculate steering angle and throttle using MPC.
-          *
-          * Both are in between [-1, 1].
-          *
-          */
+          // Calculate steering angle and throttle using MPC.
+          if (mpc.preprocess(ptsx, ptsy, px, py, psi, v))
+          {
+            auto vars = mpc.solve();
+            steer_value = vars[6] / STEER_MAX;
+            throttle_value = vars[7];
+          }
+          else
+          {
+            steer_value = double(j[1]["steering_angle"]) / STEER_MAX;
+            throttle_value = j[1]["throttle"];
+          }
 
-          auto vars = mpc.solve();
-          steer_value = vars[6] / STEER_MAX;
-          throttle_value = vars[7];
 
           json msgJson;
           // NOTE: Remember to divide by deg2rad(25) before you send the steering value back.
@@ -172,7 +173,7 @@ int main() {
           //
           // NOTE: REMEMBER TO SET THIS TO 100 MILLISECONDS BEFORE
           // SUBMITTING.
-          this_thread::sleep_for(chrono::milliseconds(100));
+          this_thread::sleep_for(chrono::milliseconds((int)latency*1000));
           ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
         }
       } else {

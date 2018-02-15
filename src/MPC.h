@@ -3,6 +3,7 @@
 
 #include <vector>
 #include "Eigen-3.3/Eigen/Core"
+#include <cppad/cppad.hpp>
 
 using namespace std;
 
@@ -26,11 +27,16 @@ class MPC
 
   double polyeval(const double& x) const;
   double polyevalPrime(const double& x) const;
+  CppAD::AD<double> polyevalAD(const CppAD::AD<double>& x) const;
+  CppAD::AD<double> polyevalPrimeAD(const CppAD::AD<double>& x) const;
 
   const int N_;
   const double dt_; // that equals the latency by design
   const int polyorder_;
   static const double Lf_;
+
+  vector<double> ptsx_car_; // waypoints-x in car coordinates
+  vector<double> ptsy_car_; // waypoints-y in car coordinates
 
   const size_t x_start_;
   const size_t y_start_;

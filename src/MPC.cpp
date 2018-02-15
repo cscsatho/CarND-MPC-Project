@@ -1,5 +1,4 @@
 #include "MPC.h"
-#include <cppad/cppad.hpp>
 #include <cppad/ipopt/solve.hpp>
 #include "Eigen-3.3/Eigen/Core"
 #include "Eigen-3.3/Eigen/QR"
@@ -23,10 +22,9 @@ class FG_eval
 {
  public:
   // Fitted polynomial coefficients
-  const Eigen::VectorXd coeffs_;
   MPC& mpc_;
 
-  FG_eval(const Eigen::VectorXd& coeffs, MPC& mpc) : coeffs_(coeffs), mpc_(mpc) { }
+  FG_eval(MPC& mpc) : mpc_(mpc) { }
 
   typedef CPPAD_TESTVECTOR(AD<double>) ADvector;
   void operator()(ADvector& fg, const ADvector& vars)
@@ -82,31 +80,36 @@ class FG_eval
     for (int t = 1; t < mpc_.N_; ++t)
     {
       // The state at time t+1 .
-      AD<double> x1     = vars[mpc_.x_start_ + t];
-      AD<double> y1     = vars[mpc_.y_start_ + t];
-      AD<double> psi1   = vars[mpc_.psi_start_ + t];
-      AD<double> v1     = vars[mpc_.v_start_ + t];
-      AD<double> cte1   = vars[mpc_.cte_start_ + t];
-      AD<double> epsi1  = vars[mpc_.epsi_start_ + t];
+      AD<double> x1      = vars[mpc_.x_start_ + t];
+      AD<double> y1      = vars[mpc_.y_start_ + t];
+      AD<double> psi1    = vars[mpc_.psi_start_ + t];
+      AD<double> v1      = vars[mpc_.v_start_ + t];
+      AD<double> cte1    = vars[mpc_.cte_start_ + t];
+      AD<double> epsi1   = vars[mpc_.epsi_start_ + t];
 
       // The state at time t.
-      AD<double> x0     = vars[mpc_.x_start_ + t - 1];
-      AD<double> y0     = vars[mpc_.y_start_ + t - 1];
-      AD<double> psi0   = vars[mpc_.psi_start_ + t - 1];
-      AD<double> v0     = vars[mpc_.v_start_ + t - 1];
-      AD<double> cte0   = vars[mpc_.cte_start_ + t - 1];
-      AD<double> epsi0  = vars[mpc_.epsi_start_ + t - 1];
+      AD<double> x0      = vars[mpc_.x_start_ + t - 1];
+      AD<double> y0      = vars[mpc_.y_start_ + t - 1];
+      AD<double> psi0    = vars[mpc_.psi_start_ + t - 1];
+      AD<double> v0      = vars[mpc_.v_start_ + t - 1];
+      AD<double> cte0    = vars[mpc_.cte_start_ + t - 1];
+      AD<double> epsi0   = vars[mpc_.epsi_start_ + t - 1];
 
       // Only consider the actuation at time t.
-      AD<double> delta0 = vars[mpc_.delta_start_ + t - 1];
-      AD<double> a0     = vars[mpc_.a_start_ + t - 1];
+      AD<double> delta0  = vars[mpc_.delta_start_ + t - 1];
+      AD<double> a0      = vars[mpc_.a_start_ + t - 1];
+
+      AD<double> f0      = mpc_.polyevalAD(x0);
+      AD<double> psides0 = mpc_.polyevalPrimeAD(x0);
 
       fg[1 + mpc_.x_start_ + t]    = x1 - (x0 + v0 * CppAD::cos(psi0) * mpc_.dt_);
       fg[1 + mpc_.y_start_ + t]    = y1 - (y0 + v0 * CppAD::sin(psi0) * mpc_.dt_);
       fg[1 + mpc_.psi_start_ + t]  = psi1 - (psi0 + v0 / MPC::Lf_ * delta0 * mpc_.dt_);
       fg[1 + mpc_.v_start_ + t]    = v1 - (v0 + a0 * mpc_.dt_);
-      fg[1 + mpc_.cte_start_ + t]  = cte1 - (cte0 + v0 * CppAD::sin(epsi0) * mpc_.dt_);
-      fg[1 + mpc_.epsi_start_ + t] = epsi1 - (epsi0 + v0 / MPC::Lf_ * delta0 * mpc_.dt_);
+      //fg[1 + mpc_.cte_start_ + t]  = cte1 - (cte0 + v0 * CppAD::sin(epsi0) * mpc_.dt_);
+      //fg[1 + mpc_.epsi_start_ + t] = epsi1 - (epsi0 + v0 / MPC::Lf_ * delta0 * mpc_.dt_); // FIXME -?
+      fg[1 + mpc_.cte_start_ + t]  = cte1 - (f0 - y0 + v0 * CppAD::sin(epsi0) * mpc_.dt_);
+      fg[1 + mpc_.epsi_start_ + t] = epsi1 - (psi0 - psides0 - v0 / MPC::Lf_ * delta0 * mpc_.dt_);
     }
   }
 };
@@ -149,13 +152,28 @@ MPC::MPC(const int N, const double dt, const int order,
 bool MPC::preprocess(vector<double>& ptsx, vector<double>& ptsy,
                      const double& px, const double& py, const double& psi, const double& v)
 {
-  coeffs_ = Polyfit(ptsx, ptsy, polyorder_);
+  ptsx_car_.resize(ptsx.size());
+  ptsy_car_.resize(ptsy.size());
 
-  double cte = py - polyeval(px);
-  double epsi = psi - atan(polyevalPrime(px));
+  assert (ptsx.size() == ptsy.size());
+
+  for (unsigned short n = 0; n < ptsx.size(); ++n)
+  {
+    ptsx_car_[n] = (ptsx[n] - px) * cos(psi) + (ptsy[n] - py) * sin(psi);
+    ptsx_car_[n] = (px - ptsx[n]) * sin(psi) + (ptsy[n] - py) * cos(psi);
+  } // px, py, and psi was adjusted to be 0
+
+  static const double PX_CAR = 0.0;
+  static const double PY_CAR = 0.0;
+  static const double PSI_CAR = 0.0;
+
+  coeffs_ = Polyfit(ptsx_car_, ptsy_car_, polyorder_);
+
+  const double cte = coeffs_[0] - PY_CAR; // all other coeffs would become 0
+  const double epsi = PSI_CAR - atan(coeffs_[1]); // adjusted psi is also 0
 
   state_ = state_next_;
-  state_next_ << px, py, psi, v, cte, epsi;
+  state_next_ << PX_CAR, PY_CAR, PSI_CAR, v, cte, epsi;
   if (initialized_) return true;
 
   initialized_ = true;
@@ -251,7 +269,7 @@ vector<double> MPC::solve()
   constraints_upperbound[epsi_start_] = epsi;
 
   // object that computes objective and constraints
-  FG_eval fg_eval(coeffs_, *this);
+  FG_eval fg_eval(*this);
 
   // place to return solution
   CppAD::ipopt::solve_result<Dvector> solution;
@@ -296,13 +314,21 @@ double MPC::polyevalPrime(const double& x) const
   return result;
 }
 
-//static AD<double> Polyeval(const FG_eval::Dvector& coeffs, const double& x)
-//{
-//  AD<double> result = 0.0;
-//  for (int i = 0; i < coeffs.size(); ++i)
-//    result += coeffs[i] * CppAD::pow(x, i);
-//  return result;
-//}
+AD<double> MPC::polyevalAD(const AD<double>& x) const
+{
+  AD<double> result = 0.0;
+  for (int i = 0; i < coeffs_.size(); ++i)
+    result += coeffs_[i] * CppAD::pow(x, i);
+  return result;
+}
+
+AD<double> MPC::polyevalPrimeAD(const AD<double>& x) const
+{
+  AD<double> result = 0.0;
+  for (int i = 1; i < coeffs_.size(); ++i)
+    result += i * coeffs_[i] * CppAD::pow(x, i - 1);
+  return result;
+}
 
 // Fit a polynomial. Adapted from
 // https://github.com/JuliaMath/Polynomials.jl/blob/master/src/Polynomials.jl#L676-L716
