@@ -13,13 +13,19 @@
 using json = nlohmann::json;
 
 // For converting back and forth between radians and degrees.
-constexpr double pi() { return M_PI; }
-double deg2rad(double x) { return x * pi() / 180; }
-double rad2deg(double x) { return x * 180 / pi(); }
-double STEER_MIN;
-double STEER_MAX;
-double ACCEL_MIN;
-double ACCEL_MAX;
+//constexpr double pi() { return M_PI; }
+//double deg2rad(double x) { return x * pi() / 180; }
+//double rad2deg(double x) { return x * 180 / pi(); }
+const double STEER_MIN   = -25. * M_PI / 180;
+const double STEER_MAX   =  25. * M_PI / 180;
+const double ACCEL_MIN   = -1.;
+const double ACCEL_MAX   =  1.;
+const double MPH_TO_MPS  =  1.609344 /*mi/km*/ / 3600 /*hr/sec*/ * 1000 /*km/m*/;
+const double V_REFERENCE =  110 * MPH_TO_MPS; // 50 mph - FIXME
+const double LATENCY     =  0.1; // sec
+const double DT          =  0.25; // sec
+const int    POLYORDER   =  3; // fitting a 3rd order polynom
+const int    N           =  10; // number of iterations
 
 // Checks if the SocketIO event has JSON data.
 // If there is data the JSON object in string format will be returned,
@@ -72,22 +78,16 @@ string hasData(string s) {
 int main() {
   uWS::Hub h;
 
-  const double LATENCY = 0.1; // ms
-  STEER_MIN = deg2rad(-25);
-  STEER_MAX = deg2rad(25);
-  ACCEL_MIN = -1.0;
-  ACCEL_MAX = -1.0;
-
   // MPC is initialized here!
   // dt := 100 millisecond latency dt
-  MPC mpc(/* N */ 10, /* dt */ LATENCY, /* polyorder */ 3, STEER_MIN, STEER_MAX, ACCEL_MIN, ACCEL_MAX);
+  MPC mpc(N, DT, LATENCY, POLYORDER, STEER_MIN, STEER_MAX, ACCEL_MIN, ACCEL_MAX, V_REFERENCE);
 
 
 //  std::chrono::time_point<std::chrono::system_clock> ts1 = std::chrono::system_clock::now();
 //  std::chrono::time_point<std::chrono::system_clock> ts2;
 //  double dt;
 
-  h.onMessage([&mpc, &LATENCY](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
+  h.onMessage([&mpc](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
@@ -106,7 +106,7 @@ int main() {
           double px = j[1]["x"];
           double py = j[1]["y"];
           double psi = j[1]["psi"];
-          double v = double(j[1]["speed"]) * 0.44704; // = 1.609344 [mi/km] / 3600 [hr/sec] * 1000 [km/m]
+          double v = double(j[1]["speed"]) * MPH_TO_MPS;
 
 //          double delta0 = j[1]["steering_angle"]; // The current steering angle in radians
 //          double a0 = j[1]["throttle"]; // The current throttle value [-1, 1]
@@ -121,32 +121,40 @@ int main() {
 //          Eigen::VectorXd state;
 //          Eigen::VectorXd coeffs;
 
+          //Display the MPC predicted trajectory 
+          vector<double> mpc_x_vals; mpc_x_vals.reserve(N - 1);
+          vector<double> mpc_y_vals; mpc_y_vals.reserve(N - 1);
+          
+
+          // NOTE: Remember to divide by deg2rad(25) before you send the steering value back.
+          // Otherwise the values will be in between [-deg2rad(25), deg2rad(25] instead of [-1, 1].
+
           // Calculate steering angle and throttle using MPC.
-          if (mpc.preprocess(ptsx, ptsy, px, py, psi, v))
-          {
+//          if (mpc.preprocess(ptsx, ptsy, px, py, psi, v))// FIXME
+//          {
 //            cout << "******" << endl;
+          mpc.preprocess(ptsx, ptsy, px, py, psi, v, double(j[1]["steering_angle"]) * -1, double(j[1]["throttle"])); // FIXME? - double(j[1]["steering_angle"]) / STEER_MAX
             auto vars = mpc.solve();
-            steer_value = vars[6] / STEER_MAX;
-            throttle_value = vars[7];
+            steer_value = vars[0] / STEER_MAX;
+            throttle_value = vars[1];
+            for (unsigned short n = 0; n < N - 2; ++n)
+	    {
+               mpc_x_vals.push_back(vars[2 * n + 2]);
+               mpc_y_vals.push_back(vars[2 * n + 3]);
+	    }
 //            cout << "***2***" << endl;
-          }
-          else
-          {
-            cout << "***INITIAL STATE***" << endl;
-            steer_value = double(j[1]["steering_angle"]) / STEER_MAX;
-            throttle_value = j[1]["throttle"];
-          }
+//          }
+//          else
+//          {
+//            cout << "***INITIAL STATE***" << endl;
+//            steer_value = double(j[1]["steering_angle"]) / STEER_MAX;
+//            throttle_value = j[1]["throttle"];
+//          }
 
 
           json msgJson;
-          // NOTE: Remember to divide by deg2rad(25) before you send the steering value back.
-          // Otherwise the values will be in between [-deg2rad(25), deg2rad(25] instead of [-1, 1].
-          msgJson["steering_angle"] = steer_value;
+          msgJson["steering_angle"] = -steer_value; // inverting orientation
           msgJson["throttle"] = throttle_value;
-
-          //Display the MPC predicted trajectory 
-          vector<double> mpc_x_vals;
-          vector<double> mpc_y_vals;
 
           //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
           // the points in the simulator are connected by a Green line
